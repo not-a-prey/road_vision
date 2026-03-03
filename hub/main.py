@@ -81,7 +81,7 @@ def on_message(client, userdata, msg):
                     redis_client.lpop("processed_agent_data")
                 )
                 processed_agent_data_batch.append(processed_agent_data)
-        store_adapter.save_data(processed_agent_data_batch=processed_agent_data_batch)
+            store_adapter.save_data(processed_agent_data_batch=processed_agent_data_batch)
         return {"status": "ok"}
     except Exception as e:
         logging.info(f"Error processing MQTT message: {e}")
