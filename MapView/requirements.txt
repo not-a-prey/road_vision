@@ -4,8 +4,7 @@ charset-normalizer==3.3.2
 docutils==0.20.1
 idna==3.6
 Kivy==2.3.0
-Kivy-Garden==0.1.5
-kivy-garden.mapview==1.0.6
+kivy_garden.mapview==1.0.6
 pydantic==2.6.2
 pydantic_core==2.16.3
 Pygments==2.17.2

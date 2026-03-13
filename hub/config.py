@@ -18,7 +18,7 @@ REDIS_HOST = os.environ.get("REDIS_HOST") or "localhost"
 REDIS_PORT = try_parse_int(os.environ.get("REDIS_PORT")) or 6379
 
 # Configure for hub logic
-BATCH_SIZE = try_parse_int(os.environ.get("BATCH_SIZE")) or 20
+BATCH_SIZE = 1
 
 # MQTT
 MQTT_BROKER_HOST = os.environ.get("MQTT_BROKER_HOST") or "localhost"
