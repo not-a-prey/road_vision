@@ -4,16 +4,16 @@ from app.entities.processed_agent_data import ProcessedAgentData
 
 class HubGateway(ABC):
     """
-    Abstract class representing the Store Gateway interface.
-    All store gateway adapters must implement these methods.
+    Abstract class representing the Hub Gateway interface.
+    All hub gateway adapters must implement these methods.
     """
 
     @abstractmethod
-    def save_data(self, processed_data: ProcessedAgentData) -> bool:
+    def save_data(self, processed_data_batch: list[ProcessedAgentData]) -> bool:
         """
-        Method to save the processed agent data in the database.
+        Method to save the processed agent data batch via the hub.
         Parameters:
-            processed_data (ProcessedAgentData): The processed agent data to be saved.
+            processed_data_batch (List[ProcessedAgentData]): The processed agent data to be saved.
         Returns:
             bool: True if the data is successfully saved, False otherwise.
         """

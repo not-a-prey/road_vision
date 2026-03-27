@@ -1,10 +1,13 @@
+from pathlib import Path
+
 from paho.mqtt import client as mqtt_client
 import json
 import time
 from schema.aggregated_data_schema import AggregatedDataSchema
 from file_datasource import FileDatasource
 import config
-
+import threading
+connected_event = threading.Event()
 
 def connect_mqtt(broker, port):
     """Create MQTT client"""
@@ -12,6 +15,7 @@ def connect_mqtt(broker, port):
 
     def on_connect(client, userdata, flags, rc):
         if rc == 0:
+            connected_event.set()
             print(f"Connected to MQTT Broker ({broker}:{port})!")
         else:
             print("Failed to connect {broker}:{port}, return code %d\n", rc)
@@ -39,14 +43,31 @@ def publish(client, topic, datasource, delay):
 
 
 def run():
-    # Prepare mqtt client
-    client = connect_mqtt(config.MQTT_BROKER_HOST, config.MQTT_BROKER_PORT)
+    try:
+        client = connect_mqtt(
+            config.MQTT_BROKER_HOST,
+            config.MQTT_BROKER_PORT
+        )
 
-    # Використовуйте просто "data/...", бо ви запускаєте скрипт з папки src
-    datasource = FileDatasource("data/accelerometer.csv", "data/gps.csv")
+        connected_event.wait()
+        csv_path = Path(__file__).resolve().parent
+        datasource = FileDatasource(
+           str( csv_path / "data" / "accelerometer.csv"),
+            str( csv_path / "data" / "gps.csv")
+        )
 
-    # Infinity publish data
-    publish(client, "processed_agent_data_topic", datasource, config.DELAY)
+        publish(
+            client,
+            config.MQTT_TOPIC,
+            datasource,
+            config.DELAY
+        )
+
+    except Exception as e:
+        print(f"FATAL ERROR: {e}")
+
+        while True:
+            time.sleep(5)
 
 
 if __name__ == "__main__":
