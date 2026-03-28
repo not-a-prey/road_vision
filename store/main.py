@@ -1,5 +1,6 @@
 import asyncio
 import json
+import traceback
 from typing import Set, Dict, List, Any
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Body
 from sqlalchemy import (
@@ -104,6 +105,7 @@ subscriptions: Dict[int, Set[WebSocket]] = {}
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int):
     await websocket.accept()
+    print(f"STORE WS: Client connected for user_id={user_id}")
     if user_id not in subscriptions:
         subscriptions[user_id] = set()
     subscriptions[user_id].add(websocket)
@@ -111,14 +113,40 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
+        print(f"STORE WS: Client disconnected for user_id={user_id}")
         subscriptions[user_id].remove(websocket)
 
 
 # Function to send data to subscribed users
+def complex_serializer(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return str(obj)
+
 async def send_data_to_subscribers(user_id: int, data):
-    if user_id in subscriptions:
-        for websocket in subscriptions[user_id]:
-            await websocket.send_json(json.dumps(data))
+    print(f"STORE WS: Preparing to broadcast to user_id={user_id}")
+    
+    try:
+        # 1. Turn WHATEVER data is (List or Dict) into a clean JSON string
+        clean_json = json.dumps(data, default=complex_serializer)
+        
+        if user_id in subscriptions:
+            # Create a copy of the set to avoid "Set changed size during iteration" errors
+            active_sockets = list(subscriptions[user_id])
+            
+            for websocket in active_sockets:
+                try:
+                    # 2. Use send_text since we manually stringified it
+                    await websocket.send_text(clean_json)
+                except Exception as e:
+                    print(f"STORE WS: Socket error, removing subscriber: {e}")
+                    subscriptions[user_id].remove(websocket)
+        else:
+            print(f"STORE WS: No active subscribers for user_id={user_id}")
+
+    except Exception as e:
+        print("STORE WS: CRITICAL SERIALIZATION ERROR")
+        traceback.print_exc() # This will tell us the EXACT line that failed
 
 
 # FastAPI CRUDL endpoints
@@ -152,9 +180,11 @@ async def create_processed_agent_data(data: List[ProcessedAgentData]):
             created.append(record)
             # notify subscribers for this user
             try:
+                print(f"STORE WS: Notifying subscribers for user_id={record.user_id}")
                 await send_data_to_subscribers(record.user_id, record.dict())
             except Exception:
                 # swallow errors from websocket so that db insert is not affected
+                print("STORE WS: Error broadcasting to WebSocket")
                 pass
     except Exception as exc:
         session.rollback()

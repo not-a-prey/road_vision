@@ -1,17 +1,22 @@
 import asyncio
+from pathlib import Path
 from kivy.app import App
 from kivy_garden.mapview import MapMarker, MapView
 from kivy.clock import Clock
 from lineMapLayer import LineMapLayer
 from datasource import Datasource, FileDatasource
+from config import ENABLE_CSV_FALLBACK
 
 class MapViewApp(App):
     def __init__(self, **kwargs):
         super().__init__()
         # Ініціалізуємо змінні
         self.car_marker = None
-        self.datasource = None
+        self.primary_ds = None
+        self.fallback_ds = None
+        self.current_ds = None
         self.path_layer = None
+        self.no_data_counter = 0
 
     def build(self):
         """
@@ -30,9 +35,17 @@ class MapViewApp(App):
         """
         Встановлює необхідні маркери, викликає функцію для оновлення мапи
         """
-        # Підключаємо джерело даних (CSV файл)
-        self.datasource = Datasource(user_id=1)
-        
+        # Підключаємо джерело даних: websocket основне, CSV fallback для тесту/розробки
+        self.primary_ds = Datasource(user_id=1)
+        if ENABLE_CSV_FALLBACK:
+            csv_path = Path(__file__).resolve().parent / "data" / "data.csv"
+            self.fallback_ds = FileDatasource(str(csv_path))
+            print(f"MAP STATUS: CSV fallback enabled, file {csv_path}")
+        else:
+            self.fallback_ds = None
+            print("MAP STATUS: CSV fallback disabled")
+        self.current_ds = self.primary_ds
+
         # Запускаємо функцію update кожну 1 секунду
         Clock.schedule_interval(self.update, 1.0)
 
@@ -40,25 +53,48 @@ class MapViewApp(App):
         """
         Викликається регулярно для оновлення мапи
         """
-        # Отримуємо нові точки з нашого джерела даних
-        new_points = self.datasource.get_new_points()
-        
+        print(f"MAP STATUS: Primary DS connected={self.primary_ds.is_connected()}, stale={self.primary_ds.is_stale()}")
+        if self.primary_ds.is_connected() and not self.primary_ds.is_stale():
+            ws_points = self.primary_ds.get_new_points()
+            if ws_points:
+                self.current_ds = self.primary_ds
+                source = "websocket"
+            else:
+                source = "websocket-empty"
+        else:
+            source = "websocket-stale"
+            ws_points = []
+
+        if source in ("websocket-empty", "websocket-stale"):
+            if self.fallback_ds is not None:
+                csv_points = self.fallback_ds.get_new_points()
+                if csv_points:
+                    self.current_ds = self.fallback_ds
+                    source = "csv-fallback"
+                    new_points = csv_points
+                else:
+                    new_points = []
+            else:
+                new_points = []
+        else:
+            new_points = ws_points
+
+        if not new_points:
+            self.no_data_counter += 1
+            print(f"MAP STATUS: no points from {source} (count={self.no_data_counter})")
+            return
+
+        self.no_data_counter = 0
+        print(f"MAP STATUS: receiving from {source}, points={len(new_points)}")
+
         for point in new_points:
             lat, lon, road_state = point
-            
-            # 1. Оновлюємо позицію машини
             self.update_car_marker((lat, lon))
-            
-            # 2. Додаємо точку до лінії маршруту
             self.path_layer.add_point((lat, lon))
-            
-            # 3. Перевіряємо стан дороги і ставимо відповідні маркери
             if road_state == "bump":
                 self.set_bump_marker((lat, lon))
             elif road_state == "pothole":
                 self.set_pothole_marker((lat, lon))
-            
-            # Центруємо мапу на машинці
             self.mapview.center_on(lat, lon)
 
     def update_car_marker(self, point):

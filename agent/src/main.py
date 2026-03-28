@@ -1,10 +1,13 @@
+from pathlib import Path
+
 from paho.mqtt import client as mqtt_client
 import json
 import time
 from schema.aggregated_data_schema import AggregatedDataSchema
 from file_datasource import FileDatasource
 import config
-
+import threading
+connected_event = threading.Event()
 
 def connect_mqtt(broker, port):
     """Create MQTT client"""
@@ -12,6 +15,7 @@ def connect_mqtt(broker, port):
 
     def on_connect(client, userdata, flags, rc):
         if rc == 0:
+            connected_event.set()
             print(f"Connected to MQTT Broker ({broker}:{port})!")
         else:
             print("Failed to connect {broker}:{port}, return code %d\n", rc)

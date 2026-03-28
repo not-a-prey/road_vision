@@ -1,6 +1,5 @@
+import json
 import logging
-
-import requests as requests
 from paho.mqtt import client as mqtt_client
 
 from app.entities.processed_agent_data import ProcessedAgentData
@@ -14,21 +13,23 @@ class HubMqttAdapter(HubGateway):
         self.topic = topic
         self.mqtt_client = self._connect_mqtt(broker, port)
 
-    def save_data(self, processed_data: ProcessedAgentData):
+    def save_data(self, processed_data_batch: list[ProcessedAgentData]):
         """
-        Save the processed road data to the Hub.
+        Save the processed road data batch to the Hub via MQTT.
         Parameters:
-            processed_data (ProcessedAgentData): Processed road data to be saved.
+            processed_data_batch (List[ProcessedAgentData]): Processed road data to be saved.
         Returns:
             bool: True if the data is successfully saved, False otherwise.
         """
-        msg = processed_data.model_dump_json()
-        result = self.mqtt_client.publish(self.topic, msg)
+        for item in processed_data_batch:
+            payload = json.dumps(item.model_dump(mode="json"))
+            print(f"Publishing to topic {self.topic}: {payload}")
+            result = self.mqtt_client.publish(self.topic, payload)
         status = result[0]
         if status == 0:
             return True
         else:
-            print(f"Failed to send message to topic {self.topic}")
+            logging.error(f"Failed to send message to topic {self.topic}")
             return False
 
     @staticmethod

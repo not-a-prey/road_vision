@@ -1,6 +1,5 @@
 import logging
 from app.adapters.agent_mqtt_adapter import AgentMQTTAdapter
-from app.adapters.hub_http_adapter import HubHttpAdapter
 from app.adapters.hub_mqtt_adapter import HubMqttAdapter
 from config import (
     MQTT_BROKER_HOST,
