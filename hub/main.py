@@ -42,9 +42,10 @@ def on_message(client, userdata, msg):
     try:
         payload: str = msg.payload.decode("utf-8", errors="ignore")
         agent_data_raw = json.loads(payload)
+        actual_agent_data = agent_data_raw.get("agent_data", {})
 
         # Детекція вибоїн
-        z_axis = agent_data_raw.get("accelerometer", {}).get("z", 16000)
+        z_axis = actual_agent_data.get("accelerometer", {}).get("z", 16000)
         road_state = "normal"
         if z_axis > 17500 or z_axis < 15000:
             road_state = "bump"
@@ -57,9 +58,7 @@ def on_message(client, userdata, msg):
 
         processed_agent_data = ProcessedAgentData(
             road_state=road_state,
-            agent_data=agent_data_raw,
-            user_id=int(agent_data_raw.get("user_id", 1)),
-            timestamp=timestamp
+            agent_data=actual_agent_data
         )
 
         redis_client.lpush("processed_agent_data", processed_agent_data.model_dump_json())
@@ -97,8 +96,8 @@ def on_message(client, userdata, msg):
 
 client.on_connect = on_connect
 client.on_message = on_message
-client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT)
 
-if __name__ == "__main__":
-    logging.info("Starting Hub MQTT loop...")
-    client.loop_forever()
+client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT)
+client.loop_start()
+
+app = FastAPI()

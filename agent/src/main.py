@@ -33,7 +33,7 @@ def publish(client, topic, datasource, delay):
         result = client.publish(topic, msg)
         status = result[0]
         if status == 0:
-            print(f"--- AGENT: Дані відправлено в топік {topic} ---")
+            print(f"--- AGENT {config.USER_ID}: Дані відправлено в топік {topic} ---")
         else:
             print(f"Failed to send message to topic {topic}")
 
@@ -46,7 +46,7 @@ def run():
     datasource = FileDatasource("data/accelerometer.csv", "data/gps.csv")
 
     # Infinity publish data
-    publish(client, "processed_agent_data_topic", datasource, config.DELAY)
+    publish(client, config.MQTT_TOPIC, datasource, config.DELAY)
 
 
 if __name__ == "__main__":
