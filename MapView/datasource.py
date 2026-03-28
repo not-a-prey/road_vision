@@ -33,8 +33,10 @@ class Datasource:
     def __init__(self, user_id: int):
         self.index = 0
         self.user_id = user_id
-        self.connection_status = None
+        self.connection_status = "Disconnected"
         self._new_points = []
+        self.last_received_at = None
+        self.stale_timeout_secs = 3
         asyncio.ensure_future(self.connect_to_server())
 
     def get_new_points(self):
@@ -42,29 +44,54 @@ class Datasource:
         self._new_points = []
         return points
 
+    def is_connected(self):
+        return self.connection_status == "Connected"
+
+    def is_stale(self):
+        if self.last_received_at is None:
+            return True
+        return (datetime.utcnow() - self.last_received_at).total_seconds() > self.stale_timeout_secs
+
     async def connect_to_server(self):
         uri = f"ws://{STORE_HOST}:{STORE_PORT}/ws/{self.user_id}"
         while True:
-            Logger.debug("CONNECT TO SERVER")
+            Logger.debug(f"Attempting WebSocket connection to {uri}")
+            print(f"MAP WS: Attempting connection to {uri}")
             try:
                 async with websockets.connect(uri) as websocket:
                     self.connection_status = "Connected"
+                    Logger.debug("WebSocket connected")
+                    print("MAP WS: Connected")
                     while True:
                         data = await websocket.recv()
                         parsed_data = json.loads(data)
                         self.handle_received_data(parsed_data)
             except websockets.ConnectionClosedOK:
                 self.connection_status = "Disconnected"
-                Logger.debug("SERVER DISCONNECT")
+                Logger.debug("WebSocket disconnected normally")
+                print("MAP WS: Disconnected normally")
             except Exception as e:
-                Logger.error(f"WebSocket Connection Error: {e}")
-                await asyncio.sleep(2) # Затримка перед повторною спробою
+                self.connection_status = "Disconnected"
+                Logger.error(f"WebSocket error: {e}")
+                print(f"MAP WS: Error: {e}")
+                await asyncio.sleep(2)  # Затримка перед повторною спробою
 
     def handle_received_data(self, data):
-        Logger.debug(f"Received data: {data}")
-        print(f"MAP RECEIVED DATA: {data}")
+        # Data can come as raw JSON string or parsed Python object
+        if isinstance(data, str):
+            parsed_data = json.loads(data)
+        else:
+            parsed_data = data
+        Logger.debug(f"WebSocket received payload: {parsed_data}")
+        print(f"MAP WS RECEIVED PARSED: {parsed_data}")
+        self.last_received_at = datetime.utcnow()
+
+        # normalize: list of dicts expected
+        if isinstance(parsed_data, dict):
+            parsed_data = [parsed_data]
+
         processed_agent_data_list = sorted(
-            [ProcessedAgentData(**item) for item in data],
+            [ProcessedAgentData(**item) for item in parsed_data],
             key=lambda v: v.timestamp,
         )
         new_points = [
