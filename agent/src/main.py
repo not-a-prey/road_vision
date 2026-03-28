@@ -37,37 +37,20 @@ def publish(client, topic, datasource, delay):
         result = client.publish(topic, msg)
         status = result[0]
         if status == 0:
-            print(f"--- AGENT: Дані відправлено в топік {topic} ---")
+            print(f"--- AGENT {config.USER_ID}: Дані відправлено в топік {topic} ---")
         else:
             print(f"Failed to send message to topic {topic}")
 
 
 def run():
-    try:
-        client = connect_mqtt(
-            config.MQTT_BROKER_HOST,
-            config.MQTT_BROKER_PORT
-        )
+    # Prepare mqtt client
+    client = connect_mqtt(config.MQTT_BROKER_HOST, config.MQTT_BROKER_PORT)
 
-        connected_event.wait()
-        csv_path = Path(__file__).resolve().parent
-        datasource = FileDatasource(
-           str( csv_path / "data" / "accelerometer.csv"),
-            str( csv_path / "data" / "gps.csv")
-        )
+    # Використовуйте просто "data/...", бо ви запускаєте скрипт з папки src
+    datasource = FileDatasource("data/accelerometer.csv", "data/gps.csv")
 
-        publish(
-            client,
-            config.MQTT_TOPIC,
-            datasource,
-            config.DELAY
-        )
-
-    except Exception as e:
-        print(f"FATAL ERROR: {e}")
-
-        while True:
-            time.sleep(5)
+    # Infinity publish data
+    publish(client, config.MQTT_TOPIC, datasource, config.DELAY)
 
 
 if __name__ == "__main__":

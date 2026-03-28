@@ -1,5 +1,6 @@
 import logging
 import json
+import requests
 from typing import List
 from datetime import datetime
 from fastapi import FastAPI
@@ -7,8 +8,6 @@ from redis import Redis
 import paho.mqtt.client as mqtt
 
 from app.entities.processed_agent_data import ProcessedAgentData
-from app.interfaces.store_gateway import StoreGateway
-from app.adapters.store_api_adapter import StoreApiAdapter
 from config import (
     STORE_API_BASE_URL,
     REDIS_HOST,
@@ -29,114 +28,76 @@ logging.basicConfig(
 redis_client = Redis(host=REDIS_HOST, port=REDIS_PORT)
 app = FastAPI()
 
-hub_gateway = None  # Global variable to hold the gateway instance
+# MQTT Client
+client = mqtt.Client()
 
-@app.on_event("startup")
-async def startup_event():
-    global hub_gateway
-    store_gateway = StoreApiAdapter(api_base_url=STORE_API_BASE_URL)
-    hub_gateway = HubGateway(
-        broker_host=MQTT_BROKER_HOST,
-        broker_port=MQTT_BROKER_PORT,
-        topic=MQTT_TOPIC,
-        store_gateway=store_gateway,
-        batch_size=BATCH_SIZE,
-    )
-    hub_gateway.connect()
-    logging.info("Starting HubGateway MQTT loop...")
-    hub_gateway.start()
+def on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        logging.info("Connected to MQTT broker")
+        client.subscribe(MQTT_TOPIC)
+    else:
+        logging.info(f"Failed to connect to MQTT broker with code: {rc}")
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    if hub_gateway:
-        hub_gateway.stop()
-        logging.info("HubGateway stopped.")
+def on_message(client, userdata, msg):
+    try:
+        payload: str = msg.payload.decode("utf-8", errors="ignore")
+        agent_data_raw = json.loads(payload)
+        actual_agent_data = agent_data_raw.get("agent_data", {})
 
+        # Детекція вибоїн
+        z_axis = actual_agent_data.get("accelerometer", {}).get("z", 16000)
+        road_state = "normal"
+        if z_axis > 17500 or z_axis < 15000:
+            road_state = "bump"
+            logging.info(f"BUMP DETECTED! Z-axis: {z_axis}")
 
-class HubGateway:
-    """Gateway that listens to edge MQTT data and forwards batches to the Store service."""
+        # Очистка часу
+        timestamp = agent_data_raw.get("timestamp")
+        if not isinstance(timestamp, str):
+            timestamp = datetime.now().isoformat()
 
-    def __init__(
-        self,
-        broker_host: str,
-        broker_port: int,
-        topic: str,
-        store_gateway: StoreGateway,
-        batch_size: int = 10,
-    ):
-        self.broker_host = broker_host
-        self.broker_port = broker_port
-        self.topic = topic
-        self.batch_size = batch_size
-        self.store_gateway = store_gateway
-        self.client = mqtt.Client()
-        self.client.on_connect = self.on_connect
-        self.client.on_message = self.on_message
+        processed_agent_data = ProcessedAgentData(
+            road_state=road_state,
+            agent_data=actual_agent_data
+        )
 
-    def on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
-            logging.info("HubGateway connected to MQTT broker")
-            client.subscribe(self.topic)
-        else:
-            logging.error(f"HubGateway failed to connect to MQTT broker with code: {rc}")
+        redis_client.lpush("processed_agent_data", processed_agent_data.model_dump_json())
 
-    def on_message(self, client, userdata, msg):
-        try:
-            payload: str = msg.payload.decode("utf-8", errors="ignore")
-            agent_data_raw = json.loads(payload)
+        if redis_client.llen("processed_agent_data") >= BATCH_SIZE:
+            logging.info(f"Batch size {BATCH_SIZE} reached. Sending...")
 
-            road_state = agent_data_raw.get("road_state", "normal")
-            agent = agent_data_raw.get("agent_data", {})
-            z_axis = agent.get("z_axis", 16000)
+            # Створюємо список, який раніше "загубився"
+            processed_agent_data_batch = []
 
-            if z_axis > 17500 or z_axis < 15000:
-                road_state = "bump"
-                logging.info(f"BUMP DETECTED! Z-axis: {z_axis}")
+            for _ in range(BATCH_SIZE):
+                raw_item = redis_client.lpop("processed_agent_data")
+                if raw_item:
+                    item_str = raw_item.decode("utf-8", errors="ignore")
+                    item_dict = json.loads(item_str)
+                    processed_agent_data_batch.append(ProcessedAgentData(**item_dict))
 
-            timestamp = agent_data_raw.get("timestamp")
-            if not isinstance(timestamp, str):
-                timestamp = datetime.now().isoformat()
+            # ПРЯМА ВІДПРАВКА (Стандартна)
+            try:
+                safe_batch_list = [json.loads(item.model_dump_json()) for item in processed_agent_data_batch]
+                url = f"{STORE_API_BASE_URL}/processed_agent_data/"
 
-            processed_agent_data = ProcessedAgentData(
-                road_state=road_state,
-                agent_data=agent,
-                user_id=int(agent_data_raw.get("user_id", 1)),
-                timestamp=timestamp,
-            )
+                # Бібліотека requests сама все ідеально запакує
+                response = requests.post(url, json=safe_batch_list)
 
-            redis_client.lpush("processed_agent_data", processed_agent_data.model_dump_json())
+                if response.status_code in (200, 201):
+                    logging.info("✅ SUCCESS! Дані залетіли в базу!")
+                else:
+                    logging.error(f"Store rejected data: {response.status_code} - {response.text}")
+            except Exception as e:
+                logging.error(f"Request failed: {e}")
 
-            if redis_client.llen("processed_agent_data") >= self.batch_size:
-                self._flush_batch()
+    except Exception as e:
+        logging.error(f"HUB ERROR: {e}")
 
-        except Exception as e:
-            logging.error(f"HUB GATEWAY ERROR: {e}")
+client.on_connect = on_connect
+client.on_message = on_message
 
-    def _flush_batch(self):
-        processed_agent_data_batch = []
-        for _ in range(self.batch_size):
-            raw_item = redis_client.lpop("processed_agent_data")
-            if isinstance(raw_item, bytes):
-                item_str = raw_item.decode("utf-8", errors="ignore")
-                item_dict = json.loads(item_str)
-                processed_agent_data_batch.append(ProcessedAgentData(**item_dict))
+client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT)
+client.loop_start()
 
-        if processed_agent_data_batch:
-            success = self.store_gateway.save_data(processed_agent_data_batch)
-            if success:
-                logging.info(f"✅ HubGateway forwarded {len(processed_agent_data_batch)} items to Store")
-            else:
-                logging.error("HubGateway failed to send processed data batch to Store")
-                for item in processed_agent_data_batch:
-                    redis_client.rpush("processed_agent_data", item.model_dump_json())
-
-    def connect(self):
-        self.client.connect(self.broker_host, self.broker_port)
-
-    def start(self):
-        self.client.loop_start()
-
-    def stop(self):
-        self.client.loop_stop()
-
-
+app = FastAPI()

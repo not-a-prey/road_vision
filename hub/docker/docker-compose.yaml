@@ -1,11 +1,6 @@
 version: "3.9"
 services:
   mqtt:
-    healthcheck:
-        test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-p", "1883"]
-        interval: 5s
-        timeout: 5s
-        retries: 5
     image: eclipse-mosquitto
     container_name: mqtt
     volumes:
@@ -96,7 +91,7 @@ services:
       MQTT_TOPIC: "processed_data_topic"
       BATCH_SIZE: 10
     ports:
-      - "9000:8000"
+      - "9009:8000"
     networks:
       mqtt_network:
       hub_store:
@@ -121,20 +116,46 @@ services:
     networks:
       mqtt_network:
       edge_hub:
-
-
-  fake_agent:
-    restart: unless-stopped
-    container_name: agent
+  
+  fake_agent_1:
+    container_name: agent_1
     build: ../../agent
     depends_on:
-      mqtt :
-        condition: service_healthy
+      - mqtt
     environment:
       MQTT_BROKER_HOST: "mqtt"
       MQTT_BROKER_PORT: 1883
       MQTT_TOPIC: "agent_data_topic"
-      DELAY: 2
+      USER_ID: 1
+      DELAY: 0.1
+    networks:
+      mqtt_network:
+  
+  fake_agent_2:
+    container_name: agent_2
+    build: ../../agent
+    depends_on:
+      - mqtt
+    environment:
+      MQTT_BROKER_HOST: "mqtt"
+      MQTT_BROKER_PORT: 1883
+      MQTT_TOPIC: "agent_data_topic"
+      USER_ID: 2
+      DELAY: 0.1
+    networks:
+      mqtt_network:
+  
+  fake_agent_3:
+    container_name: agent_3
+    build: ../../agent
+    depends_on:
+      - mqtt
+    environment:
+      MQTT_BROKER_HOST: "mqtt"
+      MQTT_BROKER_PORT: 1883
+      MQTT_TOPIC: "agent_data_topic"
+      USER_ID: 3
+      DELAY: 0.1
     networks:
       mqtt_network:
 
@@ -145,6 +166,7 @@ networks:
   hub_store:
   hub_redis:
   edge_hub:
+
 
 volumes:
   postgres_data:
