@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Car Wear Dashboard</title>
+  <link rel="stylesheet" href="styles/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Car Wear Monitor <span>Suspension Dashboard</span></h1>
+  <div class="header-actions">
+    <span class="badge" id="ws-badge">connecting…</span>
+    <span class="badge" id="last-sync">–</span>
+    <button class="btn-refresh" onclick="fetchAllCars()">↻ Refresh</button>
+  </div>
+</header>
+
+<div class="grid" id="grid">
+  <div class="state-msg"><strong>Loading…</strong>Fetching data from backend</div>
+</div>
+
+<div class="toast-area" id="toasts"></div>
+
+<script src="script/app.js"></script>
+</body>
+</html>

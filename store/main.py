@@ -1,6 +1,7 @@
 import asyncio
 import json
 import traceback
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Set, Dict, List, Any, Optional
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Body
 from sqlalchemy import (
@@ -26,9 +27,17 @@ from config import (
     POSTGRES_USER,
     POSTGRES_PASSWORD,
 )
-
 # FastAPI app setup
 app = FastAPI()
+
+# Налаштування CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Дозволяє запити з будь-якого домену (для розробки - ок)
+    allow_credentials=True,
+    allow_methods=["*"],  # Дозволяє всі методи (GET, POST, і т.д.)
+    allow_headers=["*"],  # Дозволяє всі заголовки
+)
 # SQLAlchemy setup
 DATABASE_URL = f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 engine = create_engine(DATABASE_URL)

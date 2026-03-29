@@ -1,5 +1,15 @@
 version: "3.9"
 services:
+
+  frontend:
+        container_name: frontend
+        build: ../../frontend  # Ensure this path matches where you put the frontend folder
+        depends_on:
+          - store
+        ports:
+          - "3000:3000"
+        networks:
+          - db_network #
   mqtt:
     image: eclipse-mosquitto
     container_name: mqtt
@@ -127,7 +137,7 @@ services:
       MQTT_BROKER_PORT: 1883
       MQTT_TOPIC: "agent_data_topic"
       USER_ID: 1
-      DELAY: 0.1
+      DELAY: 1
     networks:
       mqtt_network:
   
@@ -141,7 +151,7 @@ services:
       MQTT_BROKER_PORT: 1883
       MQTT_TOPIC: "agent_data_topic"
       USER_ID: 2
-      DELAY: 0.1
+      DELAY: 2
     networks:
       mqtt_network:
   
@@ -155,7 +165,7 @@ services:
       MQTT_BROKER_PORT: 1883
       MQTT_TOPIC: "agent_data_topic"
       USER_ID: 3
-      DELAY: 0.1
+      DELAY: 3
     networks:
       mqtt_network:
 
