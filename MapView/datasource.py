@@ -9,8 +9,10 @@ from config import STORE_HOST, STORE_PORT
 
 # --- Моделі даних для Store ---
 class ProcessedAgentData(BaseModel):
+    id: int
     road_state: str
-    user_id: int
+    damage_coefficient: float
+    machine_id: str
     x: float
     y: float
     z: float
