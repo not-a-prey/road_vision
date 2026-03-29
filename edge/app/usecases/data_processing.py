@@ -2,8 +2,10 @@ from app.entities.agent_data import AgentData
 from app.entities.processed_agent_data import ProcessedAgentData
 
 
+Z_AXIS_BASELINE = 16525
 Z_AXIS_POTHOLE_THRESHOLD = 16600
 Z_AXIS_BUMP_THRESHOLD = 16450
+DAMAGE_COEFFICIENT_SCALE = 100.0
 
 
 def process_agent_data(
@@ -23,4 +25,11 @@ def process_agent_data(
         road_state = "bump"
     else:
         road_state = "good"
-    return ProcessedAgentData(road_state=road_state, agent_data=agent_data)
+
+    damage_coefficient = abs(z_acceleration - Z_AXIS_BASELINE) / DAMAGE_COEFFICIENT_SCALE
+
+    return ProcessedAgentData(
+        road_state=road_state,
+        damage_coefficient=round(damage_coefficient, 2),
+        agent_data=agent_data,
+    )

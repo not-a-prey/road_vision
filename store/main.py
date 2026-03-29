@@ -1,7 +1,7 @@
 import asyncio
 import json
 import traceback
-from typing import Set, Dict, List, Any
+from typing import Set, Dict, List, Any, Optional
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Body
 from sqlalchemy import (
     create_engine,
@@ -12,6 +12,8 @@ from sqlalchemy import (
     String,
     Float,
     DateTime,
+    text,
+    func,
 )
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import select
@@ -31,13 +33,15 @@ app = FastAPI()
 DATABASE_URL = f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 engine = create_engine(DATABASE_URL)
 metadata = MetaData()
+
 # Define the ProcessedAgentData table
 processed_agent_data = Table(
     "processed_agent_data",
     metadata,
     Column("id", Integer, primary_key=True, index=True),
     Column("road_state", String),
-    Column("user_id", Integer),
+    Column("damage_coefficient", Float),
+    Column("machine_id", String),
     Column("x", Float),
     Column("y", Float),
     Column("z", Float),
@@ -45,6 +49,17 @@ processed_agent_data = Table(
     Column("longitude", Float),
     Column("timestamp", DateTime),
 )
+
+# Define the CarWear table
+car_wear = Table(
+    "car_wear",
+    metadata,
+    Column("car_id", String, primary_key=True),
+    Column("total_wear", Float, default=0.0),
+    Column("last_update_timestamp", DateTime),
+    Column("wear_status", String, default="NORMAL"),
+)
+
 SessionLocal = sessionmaker(bind=engine)
 
 
@@ -52,7 +67,8 @@ SessionLocal = sessionmaker(bind=engine)
 class ProcessedAgentDataInDB(BaseModel):
     id: int
     road_state: str
-    user_id: int
+    damage_coefficient: float
+    machine_id: str
     x: float
     y: float
     z: float
@@ -94,7 +110,19 @@ class AgentData(BaseModel):
 
 class ProcessedAgentData(BaseModel):
     road_state: str
+    damage_coefficient: float = 0.0
     agent_data: AgentData
+
+
+class CarWearResponse(BaseModel):
+    car_id: str
+    total_wear: float
+    wear_status: str
+    last_update_timestamp: Optional[datetime]
+
+
+class UpdateCarWearResponse(CarWearResponse):
+    added_this_time: float
 
 
 # WebSocket subscriptions
@@ -162,7 +190,8 @@ async def create_processed_agent_data(data: List[ProcessedAgentData]):
         for item in data:
             row = {
                 "road_state": item.road_state,
-                "user_id": item.agent_data.user_id,
+                "damage_coefficient": item.damage_coefficient,
+                "machine_id": str(item.agent_data.user_id),
                 "x": item.agent_data.accelerometer.x,
                 "y": item.agent_data.accelerometer.y,
                 "z": item.agent_data.accelerometer.z,
@@ -180,8 +209,8 @@ async def create_processed_agent_data(data: List[ProcessedAgentData]):
             created.append(record)
             # notify subscribers for this user
             try:
-                print(f"STORE WS: Notifying subscribers for user_id={record.user_id}")
-                await send_data_to_subscribers(record.user_id, record.dict())
+                print(f"STORE WS: Notifying subscribers for user_id={item.agent_data.user_id}")
+                await send_data_to_subscribers(item.agent_data.user_id, record.dict())
             except Exception:
                 # swallow errors from websocket so that db insert is not affected
                 print("STORE WS: Error broadcasting to WebSocket")
@@ -240,7 +269,8 @@ def update_processed_agent_data(processed_agent_data_id: int, data: ProcessedAge
 
     update_values = {
         "road_state": data.road_state,
-        "user_id": data.agent_data.user_id,
+        "damage_coefficient": data.damage_coefficient,
+        "machine_id": str(data.agent_data.user_id),
         "x": data.agent_data.accelerometer.x,
         "y": data.agent_data.accelerometer.y,
         "z": data.agent_data.accelerometer.z,
@@ -285,6 +315,134 @@ def delete_processed_agent_data(processed_agent_data_id: int):
     session.commit()
     session.close()
     return to_return
+
+
+# Car Wear endpoints
+
+WEAR_STATUS_NORMAL = "NORMAL"
+WEAR_STATUS_WARNING = "WARNING"
+WEAR_STATUS_REPAIR_NEEDED = "REPAIR_NEEDED"
+WEAR_STATUS_CRITICAL = "CRITICAL"
+
+WEAR_THRESHOLD_WARNING = 50
+WEAR_THRESHOLD_REPAIR = 120
+WEAR_THRESHOLD_CRITICAL = 250
+
+
+def calculate_wear_status(total_wear: float) -> str:
+    if total_wear > WEAR_THRESHOLD_CRITICAL:
+        return WEAR_STATUS_CRITICAL
+    if total_wear > WEAR_THRESHOLD_REPAIR:
+        return WEAR_STATUS_REPAIR_NEEDED
+    if total_wear > WEAR_THRESHOLD_WARNING:
+        return WEAR_STATUS_WARNING
+    return WEAR_STATUS_NORMAL
+
+
+@app.post("/update_car_wear/{car_id}", response_model=UpdateCarWearResponse)
+def update_car_wear(car_id: str):
+    session = SessionLocal()
+    try:
+        current = session.execute(
+            select(car_wear).where(car_wear.c.car_id == car_id)
+        ).first()
+
+        last_ts = current.last_update_timestamp if current else None
+        current_total = current.total_wear if current else 0.0
+
+        damage_query = select(func.coalesce(func.sum(processed_agent_data.c.damage_coefficient), 0.0)).where(
+            processed_agent_data.c.machine_id == car_id
+        )
+        if last_ts:
+            damage_query = damage_query.where(processed_agent_data.c.timestamp > last_ts)
+
+        delta = session.execute(damage_query).scalar() or 0.0
+        new_total = current_total + delta
+        status = calculate_wear_status(new_total)
+        now = datetime.utcnow()
+
+        if current:
+            session.execute(
+                car_wear.update()
+                .where(car_wear.c.car_id == car_id)
+                .values(total_wear=new_total, last_update_timestamp=now, wear_status=status)
+            )
+        else:
+            session.execute(
+                car_wear.insert().values(
+                    car_id=car_id, total_wear=new_total, last_update_timestamp=now, wear_status=status
+                )
+            )
+        session.commit()
+
+        return UpdateCarWearResponse(
+            car_id=car_id,
+            total_wear=round(new_total, 2),
+            wear_status=status,
+            last_update_timestamp=now,
+            added_this_time=round(delta, 2),
+        )
+    except Exception as exc:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        session.close()
+
+
+@app.post("/reset_car_wear/{car_id}", response_model=CarWearResponse)
+def reset_car_wear(car_id: str):
+    session = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        existing = session.execute(
+            select(car_wear).where(car_wear.c.car_id == car_id)
+        ).first()
+
+        if existing:
+            session.execute(
+                car_wear.update()
+                .where(car_wear.c.car_id == car_id)
+                .values(total_wear=0.0, last_update_timestamp=now, wear_status=WEAR_STATUS_NORMAL)
+            )
+        else:
+            session.execute(
+                car_wear.insert().values(
+                    car_id=car_id, total_wear=0.0, last_update_timestamp=now, wear_status=WEAR_STATUS_NORMAL
+                )
+            )
+        session.commit()
+
+        return CarWearResponse(
+            car_id=car_id,
+            total_wear=0.0,
+            wear_status=WEAR_STATUS_NORMAL,
+            last_update_timestamp=now,
+        )
+    except Exception as exc:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        session.close()
+
+
+@app.get("/car_wear/", response_model=list[CarWearResponse])
+def list_car_wear():
+    session = SessionLocal()
+    results = session.execute(select(car_wear)).all()
+    session.close()
+    return [CarWearResponse(**row._mapping) for row in results]
+
+
+@app.get("/car_wear/{car_id}", response_model=CarWearResponse)
+def get_car_wear(car_id: str):
+    session = SessionLocal()
+    result = session.execute(
+        select(car_wear).where(car_wear.c.car_id == car_id)
+    ).first()
+    session.close()
+    if result is None:
+        raise HTTPException(status_code=404, detail="Car wear record not found")
+    return CarWearResponse(**result._mapping)
 
 
 if __name__ == "__main__":
