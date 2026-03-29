@@ -18,6 +18,7 @@ class AgentData(BaseModel):
     accelerometer: AccelerometerData
     gps: GpsData
     timestamp: datetime
+    machine_id: str = ""
 
     @classmethod
     @field_validator("timestamp", mode="before")

@@ -41,51 +41,30 @@ def on_connect(client, userdata, flags, rc):
 def on_message(client, userdata, msg):
     try:
         payload: str = msg.payload.decode("utf-8", errors="ignore")
-        agent_data_raw = json.loads(payload)
-        actual_agent_data = agent_data_raw.get("agent_data", {})
-
-        # Детекція вибоїн
-        z_axis = actual_agent_data.get("accelerometer", {}).get("z", 16000)
-        road_state = "normal"
-        if z_axis > 17500 or z_axis < 15000:
-            road_state = "bump"
-            logging.info(f"BUMP DETECTED! Z-axis: {z_axis}")
-
-        # Очистка часу
-        timestamp = agent_data_raw.get("timestamp")
-        if not isinstance(timestamp, str):
-            timestamp = datetime.now().isoformat()
-
-        processed_agent_data = ProcessedAgentData(
-            road_state=road_state,
-            agent_data=actual_agent_data
-        )
+        # Parse ProcessedAgentData from Edge (includes road_state, damage_coefficient, agent_data)
+        processed_agent_data = ProcessedAgentData.model_validate_json(payload)
+        logging.info(f"Received: road_state={processed_agent_data.road_state}, damage={processed_agent_data.damage_coefficient}")
 
         redis_client.lpush("processed_agent_data", processed_agent_data.model_dump_json())
 
         if redis_client.llen("processed_agent_data") >= BATCH_SIZE:
             logging.info(f"Batch size {BATCH_SIZE} reached. Sending...")
 
-            # Створюємо список, який раніше "загубився"
             processed_agent_data_batch = []
-
             for _ in range(BATCH_SIZE):
                 raw_item = redis_client.lpop("processed_agent_data")
                 if raw_item:
-                    item_str = raw_item.decode("utf-8", errors="ignore")
-                    item_dict = json.loads(item_str)
-                    processed_agent_data_batch.append(ProcessedAgentData(**item_dict))
+                    processed_agent_data_batch.append(
+                        ProcessedAgentData.model_validate_json(raw_item)
+                    )
 
-            # ПРЯМА ВІДПРАВКА (Стандартна)
             try:
-                safe_batch_list = [json.loads(item.model_dump_json()) for item in processed_agent_data_batch]
                 url = f"{STORE_API_BASE_URL}/processed_agent_data/"
-
-                # Бібліотека requests сама все ідеально запакує
-                response = requests.post(url, json=safe_batch_list)
+                batch_json = [json.loads(item.model_dump_json()) for item in processed_agent_data_batch]
+                response = requests.post(url, json=batch_json)
 
                 if response.status_code in (200, 201):
-                    logging.info("✅ SUCCESS! Дані залетіли в базу!")
+                    logging.info(f"Data saved successfully: {len(processed_agent_data_batch)} records")
                 else:
                     logging.error(f"Store rejected data: {response.status_code} - {response.text}")
             except Exception as e:
