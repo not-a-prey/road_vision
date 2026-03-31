@@ -4,6 +4,10 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Car Wear Dashboard</title>
+  
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
   <link rel="stylesheet" href="styles/style.css">
 </head>
 <body>
@@ -17,8 +21,24 @@
   </div>
 </header>
 
-<div class="grid" id="grid">
-  <div class="state-msg"><strong>Loading…</strong>Fetching data from backend</div>
+<div class="workspace">
+  <div class="cards-pane" id="cards-pane">
+    <div class="state-msg"><strong>Loading…</strong>Fetching data from backend</div>
+  </div>
+
+  <div class="map-pane">
+    <div id="map"></div>
+
+    <div class="map-no-data" id="map-no-data">
+      <strong>Немає даних GPS</strong>
+      Позиції на мапі з'являться після отримання даних
+    </div>
+
+    <div class="map-legend" id="map-legend" style="display:none">
+      <div class="map-legend-title">Cars</div>
+      <div id="legend-items"></div>
+    </div>
+  </div>
 </div>
 
 <div class="toast-area" id="toasts"></div>
